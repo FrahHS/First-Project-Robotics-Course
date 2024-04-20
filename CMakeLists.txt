@@ -13,6 +13,8 @@ find_package(catkin REQUIRED COMPONENTS
   rospy
   std_msgs
   sensor_msgs
+  tf
+  dynamic_reconfigure
 )
 
 ## System dependencies are found with CMake's conventions
@@ -90,10 +92,9 @@ find_package(catkin REQUIRED COMPONENTS
 ##     and list every .cfg file to be processed
 
 ## Generate dynamic reconfigure parameters in the 'cfg' folder
-# generate_dynamic_reconfigure_options(
-#   cfg/DynReconf1.cfg
-#   cfg/DynReconf2.cfg
-# )
+generate_dynamic_reconfigure_options(
+  cfg/parameters.cfg
+)
 
 ###################################
 ## catkin specific configuration ##
@@ -117,10 +118,7 @@ catkin_package(
 
 ## Specify additional locations of header files
 ## Your package locations should be listed before other locations
-include_directories(
-# include
-  ${catkin_INCLUDE_DIRS}
-)
+include_directories(include ${catkin_INCLUDE_DIRS})
 
 ## Declare a C++ library
 # add_library(${PROJECT_NAME}
@@ -138,6 +136,13 @@ include_directories(
 # add_executable(${PROJECT_NAME}_node src/first_project_node.cpp)
 add_executable(gps_to_odom src/gps_to_odom.cpp)
 target_link_libraries(gps_to_odom ${catkin_LIBRARIES})
+
+add_executable(odom_to_tf src/odom_to_tf.cpp)
+target_link_libraries(odom_to_tf ${catkin_LIBRARIES})
+
+add_executable(lidar_remap src/lidar_remap.cpp)
+add_dependencies(lidar_remap ${PROJECT_NAME}_gencfg)
+target_link_libraries(lidar_remap ${catkin_LIBRARIES})
 
 ## Rename C++ executable without prefix
 ## The above recommended prefix causes long target names, the following renames the

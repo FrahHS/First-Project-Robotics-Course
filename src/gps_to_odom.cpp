@@ -1,26 +1,18 @@
-#include <cmath>  // Include the cmath library for mathematical functions
-#include <vector>  // Include the vector library for using vectors
+#include <cmath>
+#include <vector>
 
 #include "ros/ros.h"
-#include "sensor_msgs/NavSatFix.h"  // Include ROS sensor messages for NavSatFix
+#include "sensor_msgs/NavSatFix.h"
 #include "nav_msgs/Odometry.h"
 
-#define WGS84_A 6378137.0
-#define WGS84_B 6356752.31424518
-#define WGS84_E 0.0818191908
+
+#define WGS84_A 6378137.0         // Semi-major axis of the WGS84 ellipsoid (in meters)
+#define WGS84_B 6356752.31424518  // Semi-minor axis of the WGS84 ellipsoid (in meters)
+#define WGS84_E 0.0818191908      // First eccentricity of the WGS84 ellipsoid
+
 
 // Definition of type to simplify the code
 using Vector = std::vector<double>;
-using Matrix = std::vector<std::vector<double>>;
-
-/** @brief Function to multiply matrix 3x3 and vector size 3.
- *
- * \param matrix 3x3
- * \param vector size 3
- * \return Resultant size 3 vector.
- *
- */
-Vector multiplyMatrixVector(const Matrix& matrix, const Vector& vec);
 
 class gps_to_odom {
     double x;  // X ENU coordinate
@@ -28,16 +20,13 @@ class gps_to_odom {
     double z;  // Z ENU coordinate
 
 private:
-    ros::NodeHandle node;   // ROS node handle for ROS node functionalities
-    ros::Subscriber sub;    // ROS subscriber for subscribing to ROS topics
-    ros::Publisher pub;
+    ros::NodeHandle node;  // ROS node handle for ROS node functionalities
+    ros::Subscriber sub;   // ROS subscriber for subscribing to ROS topics
+    ros::Publisher pub;    // ROS publisher for publish to ROS topics
 
     double lat_r = 0;  // Reference latitude, will be set at the fist GPS coordinate received from the bag
     double lon_r = 0;  // Reference longitude, will be set at the fist GPS coordinate received from the bag
     double alt_r = 0;  // Reference altitude, will be set at the fist GPS coordinate received from the bag
-
-    Vector ecef_r;    // Reference ECEF position
-    Matrix matrix_r;  // Rotation matrix from ECEF to ENU
 
     /** @brief Function to convert GPS coordinates to ECEF (Earth-Centered, Earth-Fixed).
      * 
@@ -78,6 +67,9 @@ private:
     Vector gps_to_enu(double lat, double lon, double alt) {
         Vector ecef_p = gps_to_ecef(lat, lon, alt);  // Convert current GPS to ECEF
 
+        // Convert reference GPS to ECEF
+        Vector ecef_r = gps_to_ecef(lat_r, lon_r, alt_r);
+
         // Difference vector between current and reference ECEF coordinates
         Vector vector = {
             ecef_p[0] - ecef_r[0],
@@ -85,7 +77,23 @@ private:
             ecef_p[2] - ecef_r[2]
         };
 
-        return multiplyMatrixVector(matrix_r, vector);  // Return the result of matrix multiplication
+        double slat_r = sin(lat_r  * M_PI / 180.0);
+        double clat_r = cos(lat_r  * M_PI / 180.0);
+        double slon_r = sin(lon_r  * M_PI / 180.0);
+        double clon_r = cos(lon_r  * M_PI / 180.0);
+
+        double east = -slon_r * vector[0] + clon_r * vector[1];
+        double north = -slat_r * clon_r * vector[0] - slat_r * slon_r * vector[1] + clat_r * vector[2];
+        double up = clat_r * clon_r * vector[0] + clat_r * slon_r * vector[1] + slat_r * vector[2];
+
+        // Apply an additional rotation of 130 degrees around the z-axis
+        Vector result(3, 0);
+        result[0] = east;// * cos(130 * M_PI / 180) - north * sin(130 * M_PI / 180);
+        result[1] = east;// * sin(130 * M_PI / 180) + north * cos(130 * M_PI / 180);
+        result[2] = up;
+
+        //return multiplyMatrixVector(matrix_r, vector);  // Return the result of matrix multiplication
+        return result;
     }
 
 public:
@@ -95,21 +103,6 @@ public:
         nh_private.getParam("lat_r", lat_r);
         nh_private.getParam("lon_r", lon_r);
         nh_private.getParam("alt_r", alt_r);
-
-        double slat_r = sin(lat_r  * M_PI / 180.0);
-        double clat_r = cos(lat_r  * M_PI / 180.0);
-        double slon_r = sin(lon_r  * M_PI / 180.0);
-        double clon_r = cos(lon_r  * M_PI / 180.0);
-
-        // Convert reference GPS to ECEF
-        ecef_r = gps_to_ecef(lat_r, lon_r, alt_r);
-
-        // Init matrix from ECEF to ENU
-        matrix_r = {
-            { -slon_r,        clon_r,         0      },
-            { -slat_r*clon_r, -slat_r*slon_r, clat_r },
-            { clat_r*clon_r,  clat_r*slon_r,  slat_r }
-        };
 
         pub = node.advertise<nav_msgs::Odometry>("gps_odom", 1000);
         sub = node.subscribe<sensor_msgs::NavSatFix>("fix", 1, &gps_to_odom::callback, this);  // Subscribe to NavSatFix topic
@@ -140,11 +133,12 @@ public:
         // Set ENU coordinates
         x = enu[0];
         y = enu[1];
-        z = enu[2];
+        z = 0;
 
+        // Setup the odometry message
         nav_msgs::Odometry odometry_msg;
-        odometry_msg.header.stamp = ros::Time::now();
-        odometry_msg.header.frame_id = "odom";
+        odometry_msg.header.stamp = msg->header.stamp;
+        odometry_msg.header.frame_id = "world";
         odometry_msg.child_frame_id = "base_link";
 
         odometry_msg.pose.pose.position.x = x;
@@ -152,6 +146,7 @@ public:
         odometry_msg.pose.pose.position.z = z;
 
         // Set the orientation as a quaternion
+        // 2D system soo 3 DOF: x, y, tetha(qz)
         double yaw = heading / 2.0;
         double qw = cos(yaw);
         double qx = 0.0;
@@ -168,30 +163,11 @@ public:
     }
 };
 
-Vector multiplyMatrixVector(const Matrix& matrix, const Vector& vector) {
-    // Check that the matrix is 3x3 and the vector is of size 3
-    if (matrix.size() != 3 || matrix[0].size() != 3 || vector.size() != 3) {
-        std::cerr << "Error: The matrix must be 3x3 and the vector must be of size 3." << std::endl;
-        return Vector();
-    }
-
-    Vector result(3, 0.0);  // Result vector initialized to 0
-
-    // Multiplication between a 3x3 matrix and a size 3 vector
-    for (size_t i = 0; i < 3; ++i) {
-        for (size_t j = 0; j < 3; ++j) {
-            result[i] += matrix[i][j] * vector[j];
-        }
-    }
-
-    return result;
-}
-
 int main(int argc, char **argv) {
-    ros::init(argc, argv, "gps_to_odom");
+    ros::init(argc, argv, "gps_to_odom");  // Initialize the ROS node
 
-    gps_to_odom my_gps_to_odom;
-    ros::spin();
+    gps_to_odom my_gps_to_odom;  // Create an instance of the gps_to_odom class
+    ros::spin();  // Enter the ROS event loop
 
     return 0;
 }
